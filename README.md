@@ -8,7 +8,7 @@ A repository which implements the experiments for exploring the phenomenon of ro
 ## Robust overfitting hurts - early stopping is essential! 
 A large amount of research over the past couple years has looked into defending deep networks against adversarial examples, with significant improvements over the well-known PGD-based adversarial training defense. However, adversarial training doesn't always behave similarly to standard training. The main observation we find is that, unlike in standard training, training to convergence can significantly harm robust generalization, and actually increases robust test error well before training has converged, as seen in the following learning curve: 
 
-![overfitting](https://github.com/locuslab/robust_overfitting/blob/master/cifar10_curve.png)
+![overfitting](./cifar10_curve.png)
 
 After the initial learning rate decay, the robust test error actually increases! As a result, training to convergence is bad for adversarial training, and oftentimes, simply training for one epoch after decaying the learning rate achieves the best robust error on the test set. This behavior is reflected across multiple datasets, different approaches to adversarial training, and both L-infinity and L-2 threat models. 
 

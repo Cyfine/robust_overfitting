@@ -1,4 +1,3 @@
-
 import argparse
 import logging
 import sys
@@ -20,17 +19,20 @@ from preactresnet import PreActResNet18
 CIFAR100_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
 CIFAR100_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
 
-mu = torch.tensor(CIFAR100_MEAN).view(3,1,1).cuda()
-std = torch.tensor(CIFAR100_STD).view(3,1,1).cuda()
+mu = torch.tensor(CIFAR100_MEAN).view(3, 1, 1).cuda()
+std = torch.tensor(CIFAR100_STD).view(3, 1, 1).cuda()
+
 
 def normalize(X):
-    return (X - mu)/std
+    return (X - mu) / std
 
-upper_limit, lower_limit = 1,0
+
+upper_limit, lower_limit = 1, 0
 
 
 def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
+
 
 def mixup_data(x, y, alpha=1.0):
     '''Returns mixed inputs, pairs of targets, and lambda'''
@@ -62,25 +64,25 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts,
             delta.uniform_(-epsilon, epsilon)
         elif norm == "l_2":
             delta.normal_()
-            d_flat = delta.view(delta.size(0),-1)
-            n = d_flat.norm(p=2,dim=1).view(delta.size(0),1,1,1)
+            d_flat = delta.view(delta.size(0), -1)
+            n = d_flat.norm(p=2, dim=1).view(delta.size(0), 1, 1, 1)
             r = torch.zeros_like(n).uniform_(0, 1)
-            delta *= r/n*epsilon
+            delta *= r / n * epsilon
         else:
             raise ValueError
-        delta = clamp(delta, lower_limit-X, upper_limit-X)
+        delta = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
             output = model(normalize(X + delta))
             if early_stop:
                 index = torch.where(output.max(1)[1] == y)[0]
             else:
-                index = slice(None,None,None)
+                index = slice(None, None, None)
             if not isinstance(index, slice) and len(index) == 0:
                 break
             if mixup:
                 criterion = nn.CrossEntropyLoss()
-                loss = mixup_criterion(criterion, model(normalize(X+delta)), y_a, y_b, lam)
+                loss = mixup_criterion(criterion, model(normalize(X + delta)), y_a, y_b, lam)
             else:
                 loss = F.cross_entropy(output, y)
             loss.backward()
@@ -91,17 +93,17 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts,
             if norm == "l_inf":
                 d = torch.clamp(d + alpha * torch.sign(g), min=-epsilon, max=epsilon)
             elif norm == "l_2":
-                g_norm = torch.norm(g.view(g.shape[0],-1),dim=1).view(-1,1,1,1)
-                scaled_g = g/(g_norm + 1e-10)
-                d = (d + scaled_g*alpha).view(d.size(0),-1).renorm(p=2,dim=0,maxnorm=epsilon).view_as(d)
+                g_norm = torch.norm(g.view(g.shape[0], -1), dim=1).view(-1, 1, 1, 1)
+                scaled_g = g / (g_norm + 1e-10)
+                d = (d + scaled_g * alpha).view(d.size(0), -1).renorm(p=2, dim=0, maxnorm=epsilon).view_as(d)
             d = clamp(d, lower_limit - x, upper_limit - x)
             delta.data[index, :, :, :] = d
             delta.grad.zero_()
         if mixup:
             criterion = nn.CrossEntropyLoss(reduction='none')
-            all_loss = mixup_criterion(criterion, model(normalize(X+delta)), y_a, y_b, lam)
+            all_loss = mixup_criterion(criterion, model(normalize(X + delta)), y_a, y_b, lam)
         else:
-            all_loss = F.cross_entropy(model(normalize(X+delta)), y, reduction='none')
+            all_loss = F.cross_entropy(model(normalize(X + delta)), y, reduction='none')
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
@@ -147,7 +149,7 @@ def main():
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.DEBUG,
         handlers=[
-            logging.FileHandler(os.path.join(args.fname,'output.log')),
+            logging.FileHandler(os.path.join(args.fname, 'output.log')),
             logging.StreamHandler()
         ])
 
@@ -201,13 +203,13 @@ def main():
 
     if args.l2:
         decay, no_decay = [], []
-        for name,param in model.named_parameters():
+        for name, param in model.named_parameters():
             if 'bn' not in name and 'bias' not in name:
                 decay.append(param)
             else:
                 no_decay.append(param)
-        params = [{'params':decay, 'weight_decay':args.l2},
-                  {'params':no_decay, 'weight_decay': 0 }]
+        params = [{'params': decay, 'weight_decay': args.l2},
+                  {'params': no_decay, 'weight_decay': 0}]
     else:
         params = model.parameters()
 
@@ -229,16 +231,16 @@ def main():
             else:
                 return args.lr_max / 100.
 
-
     if args.resume:
         start_epoch = args.resume
-        model.load_state_dict(torch.load(os.path.join(args.fname, f'model_{start_epoch-1}.pth')))
-        opt.load_state_dict(torch.load(os.path.join(args.fname, f'opt_{start_epoch-1}.pth')))
+        model.load_state_dict(torch.load(os.path.join(args.fname, f'model_{start_epoch - 1}.pth')))
+        opt.load_state_dict(torch.load(os.path.join(args.fname, f'opt_{start_epoch - 1}.pth')))
         logger.info(f'Resuming at epoch {start_epoch}')
     else:
         start_epoch = 0
 
-    logger.info('Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Train Robust Loss \t Train Robust Acc \t Test Loss \t Test Acc \t Test Robust Loss \t Test Robust Acc')
+    logger.info(
+        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Train Robust Loss \t Train Robust Acc \t Test Loss \t Test Acc \t Test Robust Loss \t Test Robust Acc')
     for epoch in range(start_epoch, epochs):
         model.train()
         start_time = time.time()
@@ -258,7 +260,8 @@ def main():
             if args.attack == 'pgd':
                 # Random initialization
                 if args.mixup:
-                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm, mixup=True, y_a=y_a, y_b=y_b, lam=lam)
+                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm,
+                                       mixup=True, y_a=y_a, y_b=y_b, lam=lam)
                 else:
                     delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm)
                 delta = delta.detach()
@@ -274,9 +277,9 @@ def main():
                 robust_loss = criterion(robust_output, y)
 
             if args.l1:
-                for name,param in model.named_parameters():
+                for name, param in model.named_parameters():
                     if 'bn' not in name and 'bias' not in name:
-                        robust_loss += args.l1*param.abs().sum()
+                        robust_loss += args.l1 * param.abs().sum()
 
             opt.zero_grad()
             robust_loss.backward()
@@ -325,10 +328,11 @@ def main():
             test_n += y.size(0)
 
         test_time = time.time()
-        logger.info('%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
+        logger.info(
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
             epoch, train_time - start_time, test_time - train_time, lr,
-            train_loss/train_n, train_acc/train_n, train_robust_loss/train_n, train_robust_acc/train_n,
-            test_loss/test_n, test_acc/test_n, test_robust_loss/test_n, test_robust_acc/test_n)
+                   train_loss / train_n, train_acc / train_n, train_robust_loss / train_n, train_robust_acc / train_n,
+                   test_loss / test_n, test_acc / test_n, test_robust_loss / test_n, test_robust_acc / test_n)
         torch.save(model.state_dict(), os.path.join(args.fname, f'model_{epoch}.pth'))
         torch.save(opt.state_dict(), os.path.join(args.fname, f'opt_{epoch}.pth'))
 
