@@ -18,13 +18,16 @@ from preactresnet import PreActResNet18
 
 from utils import *
 
-mu = torch.tensor(cifar10_mean).view(3,1,1).cuda()
-std = torch.tensor(cifar10_std).view(3,1,1).cuda()
+mu = torch.tensor(cifar10_mean).view(3, 1, 1).cuda()
+std = torch.tensor(cifar10_std).view(3, 1, 1).cuda()
+
 
 def normalize(X):
-    return (X - mu)/std
+    return (X - mu) / std
 
-upper_limit, lower_limit = 1,0
+
+upper_limit, lower_limit = 1, 0
+
 
 def cifar10_unlabeled(aux_path, aux_take_amount=None):
     with open(aux_path, 'rb') as f:
@@ -39,6 +42,7 @@ def cifar10_unlabeled(aux_path, aux_take_amount=None):
         'train': {'data': aux_data, 'labels': aux_targets}
     }
 
+
 def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
@@ -49,13 +53,14 @@ class Batches():
         self.batch_size = batch_size
         self.set_random_choices = set_random_choices
         self.dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True, shuffle=shuffle, drop_last=drop_last
+            dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True, shuffle=shuffle,
+            drop_last=drop_last
         )
 
     def __iter__(self):
         if self.set_random_choices:
             self.dataset.set_random_choices()
-        return ({'input': x.to(device).float(), 'target': y.to(device).long()} for (x,y) in self.dataloader)
+        return ({'input': x.to(device).float(), 'target': y.to(device).long()} for (x, y) in self.dataloader)
 
     def __next__(self):
         if self.set_random_choices:
@@ -97,25 +102,25 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts,
             delta.uniform_(-epsilon, epsilon)
         elif norm == "l_2":
             delta.normal_()
-            d_flat = delta.view(delta.size(0),-1)
-            n = d_flat.norm(p=2,dim=1).view(delta.size(0),1,1,1)
+            d_flat = delta.view(delta.size(0), -1)
+            n = d_flat.norm(p=2, dim=1).view(delta.size(0), 1, 1, 1)
             r = torch.zeros_like(n).uniform_(0, 1)
-            delta *= r/n*epsilon
+            delta *= r / n * epsilon
         else:
             raise ValueError
-        delta = clamp(delta, lower_limit-X, upper_limit-X)
+        delta = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
             output = model(normalize(X + delta))
             if early_stop:
                 index = torch.where(output.max(1)[1] == y)[0]
             else:
-                index = slice(None,None,None)
+                index = slice(None, None, None)
             if not isinstance(index, slice) and len(index) == 0:
                 break
             if mixup:
                 criterion = nn.CrossEntropyLoss()
-                loss = mixup_criterion(criterion, model(normalize(X+delta)), y_a, y_b, lam)
+                loss = mixup_criterion(criterion, model(normalize(X + delta)), y_a, y_b, lam)
             else:
                 loss = F.cross_entropy(output, y)
             loss.backward()
@@ -126,17 +131,17 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts,
             if norm == "l_inf":
                 d = torch.clamp(d + alpha * torch.sign(g), min=-epsilon, max=epsilon)
             elif norm == "l_2":
-                g_norm = torch.norm(g.view(g.shape[0],-1),dim=1).view(-1,1,1,1)
-                scaled_g = g/(g_norm + 1e-10)
-                d = (d + scaled_g*alpha).view(d.size(0),-1).renorm(p=2,dim=0,maxnorm=epsilon).view_as(d)
+                g_norm = torch.norm(g.view(g.shape[0], -1), dim=1).view(-1, 1, 1, 1)
+                scaled_g = g / (g_norm + 1e-10)
+                d = (d + scaled_g * alpha).view(d.size(0), -1).renorm(p=2, dim=0, maxnorm=epsilon).view_as(d)
             d = clamp(d, lower_limit - x, upper_limit - x)
             delta.data[index, :, :, :] = d
             delta.grad.zero_()
         if mixup:
             criterion = nn.CrossEntropyLoss(reduction='none')
-            all_loss = mixup_criterion(criterion, model(normalize(X+delta)), y_a, y_b, lam)
+            all_loss = mixup_criterion(criterion, model(normalize(X + delta)), y_a, y_b, lam)
         else:
-            all_loss = F.cross_entropy(model(normalize(X+delta)), y, reduction='none')
+            all_loss = F.cross_entropy(model(normalize(X + delta)), y, reduction='none')
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
@@ -211,23 +216,24 @@ def main():
             print("Couldn't find a dataset with a validation split, did you run "
                   "generate_validation.py?")
             return
-        val_set = list(zip(transpose(dataset['val']['data']/255.), dataset['val']['labels']))
+        val_set = list(zip(transpose(dataset['val']['data'] / 255.), dataset['val']['labels']))
         val_batches = Batches(val_set, args.batch_size, shuffle=False, num_workers=2)
     else:
         dataset = cifar10(args.data_dir)
     unlabeled_dataset = cifar10_unlabeled(args.aux_path, args.aux_take_amount)
 
-    train_set = list(zip(transpose(pad(dataset['train']['data'], 4)/255.),
-        dataset['train']['labels']))
+    train_set = list(zip(transpose(pad(dataset['train']['data'], 4) / 255.),
+                         dataset['train']['labels']))
     train_set_x = Transform(train_set, transforms)
-    train_batches = Batches(train_set_x, int(args.batch_size/2), shuffle=True, set_random_choices=True, num_workers=2)
+    train_batches = Batches(train_set_x, int(args.batch_size / 2), shuffle=True, set_random_choices=True, num_workers=2)
 
-    train_u_set = list(zip(transpose(pad(unlabeled_dataset['train']['data'], 4)/255.),
-        dataset['train']['labels']))
+    train_u_set = list(zip(transpose(pad(unlabeled_dataset['train']['data'], 4) / 255.),
+                           dataset['train']['labels']))
     train_u_set_x = Transform(train_u_set, transforms)
-    train_u_batches = Batches(train_u_set_x, int(args.batch_size/2), shuffle=True, set_random_choices=True, num_workers=2)
+    train_u_batches = Batches(train_u_set_x, int(args.batch_size / 2), shuffle=True, set_random_choices=True,
+                              num_workers=2)
 
-    test_set = list(zip(transpose(dataset['test']['data']/255.), dataset['test']['labels']))
+    test_set = list(zip(transpose(dataset['test']['data'] / 255.), dataset['test']['labels']))
     test_batches = Batches(test_set, args.batch_size, shuffle=False, num_workers=2)
 
     epsilon = (args.epsilon / 255.)
@@ -245,13 +251,13 @@ def main():
 
     if args.l2:
         decay, no_decay = [], []
-        for name,param in model.named_parameters():
+        for name, param in model.named_parameters():
             if 'bn' not in name and 'bias' not in name:
                 decay.append(param)
             else:
                 no_decay.append(param)
-        params = [{'params':decay, 'weight_decay':args.l2},
-                  {'params':no_decay, 'weight_decay': 0 }]
+        params = [{'params': decay, 'weight_decay': args.l2},
+                  {'params': no_decay, 'weight_decay': 0}]
     else:
         params = model.parameters()
 
@@ -280,8 +286,8 @@ def main():
     best_val_robust_acc = 0
     if args.resume:
         start_epoch = args.resume
-        model.load_state_dict(torch.load(os.path.join(args.fname, f'model_{start_epoch-1}.pth')))
-        opt.load_state_dict(torch.load(os.path.join(args.fname, f'opt_{start_epoch-1}.pth')))
+        model.load_state_dict(torch.load(os.path.join(args.fname, f'model_{start_epoch - 1}.pth')))
+        opt.load_state_dict(torch.load(os.path.join(args.fname, f'opt_{start_epoch - 1}.pth')))
         logger.info(f'Resuming at epoch {start_epoch}')
 
         best_test_robust_acc = torch.load(os.path.join(args.fname, f'model_best.pth'))['test_robust_acc']
@@ -296,7 +302,8 @@ def main():
             return
         logger.info("[Evaluation mode]")
 
-    logger.info('Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Train Robust Loss \t Train Robust Acc \t Test Loss \t Test Acc \t Test Robust Loss \t Test Robust Acc')
+    logger.info(
+        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Train Robust Loss \t Train Robust Acc \t Test Loss \t Test Acc \t Test Robust Loss \t Test Robust Acc')
     for epoch in range(start_epoch, epochs):
         model.train()
         start_time = time.time()
@@ -324,12 +331,13 @@ def main():
             if args.attack == 'pgd':
                 # Random initialization
                 if args.mixup:
-                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm, mixup=True, y_a=y_a, y_b=y_b, lam=lam)
+                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm,
+                                       mixup=True, y_a=y_a, y_b=y_b, lam=lam)
                 else:
                     delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm)
                 delta = delta.detach()
             elif args.attack == 'fgsm':
-                delta = attack_pgd(model, X, y, epsilon, 1.25*epsilon, 1, 1, args.norm)
+                delta = attack_pgd(model, X, y, epsilon, 1.25 * epsilon, 1, 1, args.norm)
             # Standard training
             elif args.attack == 'none':
                 delta = torch.zeros_like(X)
@@ -341,9 +349,9 @@ def main():
                 robust_loss = criterion(robust_output, y)
 
             if args.l1:
-                for name,param in model.named_parameters():
+                for name, param in model.named_parameters():
                     if 'bn' not in name and 'bias' not in name:
-                        robust_loss += args.l1*param.abs().sum()
+                        robust_loss += args.l1 * param.abs().sum()
 
             opt.zero_grad()
             robust_loss.backward()
@@ -376,7 +384,8 @@ def main():
             if args.attack == 'none':
                 delta = torch.zeros_like(X)
             else:
-                delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm, early_stop=args.eval)
+                delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm,
+                                   early_stop=args.eval)
             delta = delta.detach()
 
             robust_output = model(normalize(torch.clamp(X + delta[:X.size(0)], min=lower_limit, max=upper_limit)))
@@ -406,7 +415,8 @@ def main():
                 if args.attack == 'none':
                     delta = torch.zeros_like(X)
                 else:
-                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm, early_stop=args.eval)
+                    delta = attack_pgd(model, X, y, epsilon, pgd_alpha, args.attack_iters, args.restarts, args.norm,
+                                       early_stop=args.eval)
                 delta = delta.detach()
 
                 robust_output = model(normalize(torch.clamp(X + delta[:X.size(0)], min=lower_limit, max=upper_limit)))
@@ -422,49 +432,51 @@ def main():
                 val_n += y.size(0)
 
         if not args.eval:
-            logger.info('%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
+            logger.info(
+                '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
                 epoch, train_time - start_time, test_time - train_time, lr,
-                train_loss/train_n, train_acc/train_n, train_robust_loss/train_n, train_robust_acc/train_n,
-                test_loss/test_n, test_acc/test_n, test_robust_loss/test_n, test_robust_acc/test_n)
+                train_loss / train_n, train_acc / train_n, train_robust_loss / train_n, train_robust_acc / train_n,
+                test_loss / test_n, test_acc / test_n, test_robust_loss / test_n, test_robust_acc / test_n)
 
             if args.val:
                 logger.info('validation %.4f \t %.4f \t %.4f \t %.4f',
-                    val_loss/val_n, val_acc/val_n, val_robust_loss/val_n, val_robust_acc/val_n)
+                            val_loss / val_n, val_acc / val_n, val_robust_loss / val_n, val_robust_acc / val_n)
 
-                if val_robust_acc/val_n > best_val_robust_acc:
+                if val_robust_acc / val_n > best_val_robust_acc:
                     torch.save({
-                            'state_dict':model.state_dict(),
-                            'test_robust_acc':test_robust_acc/test_n,
-                            'test_robust_loss':test_robust_loss/test_n,
-                            'test_loss':test_loss/test_n,
-                            'test_acc':test_acc/test_n,
-                            'val_robust_acc':val_robust_acc/val_n,
-                            'val_robust_loss':val_robust_loss/val_n,
-                            'val_loss':val_loss/val_n,
-                            'val_acc':val_acc/val_n,
-                        }, os.path.join(args.fname, f'model_val.pth'))
-                    best_val_robust_acc = val_robust_acc/val_n
+                        'state_dict': model.state_dict(),
+                        'test_robust_acc': test_robust_acc / test_n,
+                        'test_robust_loss': test_robust_loss / test_n,
+                        'test_loss': test_loss / test_n,
+                        'test_acc': test_acc / test_n,
+                        'val_robust_acc': val_robust_acc / val_n,
+                        'val_robust_loss': val_robust_loss / val_n,
+                        'val_loss': val_loss / val_n,
+                        'val_acc': val_acc / val_n,
+                    }, os.path.join(args.fname, f'model_val.pth'))
+                    best_val_robust_acc = val_robust_acc / val_n
 
             # save checkpoint
-            if (epoch+1) % args.chkpt_iters == 0 or epoch+1 == epochs:
+            if (epoch + 1) % args.chkpt_iters == 0 or epoch + 1 == epochs:
                 torch.save(model.state_dict(), os.path.join(args.fname, f'model_{epoch}.pth'))
                 torch.save(opt.state_dict(), os.path.join(args.fname, f'opt_{epoch}.pth'))
 
             # save best
-            if test_robust_acc/test_n > best_test_robust_acc:
+            if test_robust_acc / test_n > best_test_robust_acc:
                 torch.save({
-                        'state_dict':model.state_dict(),
-                        'test_robust_acc':test_robust_acc/test_n,
-                        'test_robust_loss':test_robust_loss/test_n,
-                        'test_loss':test_loss/test_n,
-                        'test_acc':test_acc/test_n,
-                    }, os.path.join(args.fname, f'model_best.pth'))
-                best_test_robust_acc = test_robust_acc/test_n
+                    'state_dict': model.state_dict(),
+                    'test_robust_acc': test_robust_acc / test_n,
+                    'test_robust_loss': test_robust_loss / test_n,
+                    'test_loss': test_loss / test_n,
+                    'test_acc': test_acc / test_n,
+                }, os.path.join(args.fname, f'model_best.pth'))
+                best_test_robust_acc = test_robust_acc / test_n
         else:
-            logger.info('%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
+            logger.info(
+                '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
                 epoch, train_time - start_time, test_time - train_time, -1,
                 -1, -1, -1, -1,
-                test_loss/test_n, test_acc/test_n, test_robust_loss/test_n, test_robust_acc/test_n)
+                test_loss / test_n, test_acc / test_n, test_robust_loss / test_n, test_robust_acc / test_n)
             return
 
 
